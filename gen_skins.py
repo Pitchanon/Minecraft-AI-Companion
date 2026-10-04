@@ -1,7 +1,7 @@
-"""Generate the bot's skin list from Steve, Alex and every PNG in Companion_RP/textures/entity/bot_skins/.
+"""Generate the bot's skin list from the game's cat skins and every PNG in Companion_RP/textures/entity/bot_skins/.
 
 Writes the client entity and render controller, and the random-skin groups in the behavior entity.
-A file whose name ends in _slim (e.g. kid_slim.png) uses the thin-arm (Alex) model.
+Extra skins use the cat texture layout (64x32).
 """
 import json
 import pathlib
@@ -15,8 +15,20 @@ BP_ENTITY = root / "Companion_BP/entities/companion.json"
 SKIN_DIR = RP / "textures/entity/bot_skins"
 
 skins = [
-    ("steve", "textures/entity/steve", False),
-    ("alex", "textures/entity/alex", True),
+    (name, f"textures/entity/cat/{file}")
+    for name, file in [
+        ("tabby", "tabby"),
+        ("black", "tuxedo"),
+        ("red", "redtabby"),
+        ("siamese", "siamesecat"),
+        ("british", "britishshorthair"),
+        ("calico", "calico"),
+        ("persian", "persian"),
+        ("ragdoll", "ragdoll"),
+        ("white", "white"),
+        ("jellie", "jellie"),
+        ("all_black", "allblackcat"),
+    ]
 ]
 
 errors = []
@@ -29,10 +41,10 @@ for png in sorted(SKIN_DIR.glob("*.png")):
         errors.append(f"{png.name}: not a PNG file")
         continue
     width, height = struct.unpack(">II", head[16:24])
-    if (width, height) != (64, 64):
-        errors.append(f"{png.name}: skin must be 64x64, got {width}x{height}")
+    if (width, height) != (64, 32):
+        errors.append(f"{png.name}: cat skin must be 64x32, got {width}x{height}")
         continue
-    skins.append((f"skin_{png.stem}", f"textures/entity/bot_skins/{png.stem}", png.stem.endswith("_slim")))
+    skins.append((f"skin_{png.stem}", f"textures/entity/bot_skins/{png.stem}"))
 
 if errors:
     print("\n".join("FAIL " + e for e in errors))
@@ -43,36 +55,34 @@ def write(path, data):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-# Client entity: player model with the humanoid animations a skeleton uses (walk, look, attack swing)
+# Client entity: the game's cat model and animations. The vanilla cat gets variable.state from
+# the engine, so set it here: walk while moving, sit while standing still.
 write(
     RP / "entity/companion.entity.json",
     {
-        "format_version": "1.10.0",
+        "format_version": "1.8.0",
         "minecraft:client_entity": {
             "description": {
                 "identifier": "bot:companion",
-                "materials": {"default": "entity_alphatest"},
-                "textures": {key: path for key, path, _ in skins},
-                "geometry": {"default": "geometry.humanoid.custom", "slim": "geometry.humanoid.customSlim"},
+                "materials": {"default": "cat"},
+                "textures": {key: path for key, path in skins},
+                "geometry": {"default": "geometry.cat"},
                 "scripts": {
-                    "scale": "0.9375",
-                    "pre_animation": [
-                        "variable.tcos0 = (Math.cos(query.modified_distance_moved * 38.17) * query.modified_move_speed / variable.gliding_speed_value) * 57.3;"
-                    ],
+                    "pre_animation": ["variable.state = query.modified_move_speed > 0.05 ? 3 : 2;"],
                 },
                 "animations": {
-                    "look_at_target_default": "animation.humanoid.look_at_target.default",
-                    "look_at_target_gliding": "animation.humanoid.look_at_target.gliding",
-                    "look_at_target_swimming": "animation.humanoid.look_at_target.swimming",
-                    "move": "animation.humanoid.move",
-                    "attack.rotations": "animation.humanoid.attack.rotations",
-                    "bob": "animation.humanoid.bob",
+                    "sneak": "animation.cat.sneak",
+                    "walk": "animation.cat.walk",
+                    "sprint": "animation.cat.sprint",
+                    "sit": "animation.cat.sit",
+                    "lie_down": "animation.cat.lie_down",
+                    "baby_sit": "animation.cat.baby_sit",
+                    "baby_lie_down": "animation.cat.baby_lie_down",
+                    "look_at_target": "animation.common.look_at_target",
                 },
                 "animation_controllers": [
-                    {"look_at_target": "controller.animation.humanoid.look_at_target"},
-                    {"move": "controller.animation.humanoid.move"},
-                    {"attack": "controller.animation.humanoid.attack"},
-                    {"bob": "controller.animation.humanoid.bob"},
+                    {"look_at_target": "controller.animation.cat.look_at_target"},
+                    {"move": "controller.animation.cat.move"},
                 ],
                 "render_controllers": ["controller.render.bot_companion"],
             }
@@ -86,13 +96,8 @@ write(
         "format_version": "1.8.0",
         "render_controllers": {
             "controller.render.bot_companion": {
-                "arrays": {
-                    "textures": {"Array.skins": [f"Texture.{key}" for key, _, _ in skins]},
-                    "geometries": {
-                        "Array.geos": ["Geometry.slim" if slim else "Geometry.default" for _, _, slim in skins]
-                    },
-                },
-                "geometry": "Array.geos[query.variant]",
+                "arrays": {"textures": {"Array.skins": [f"Texture.{key}" for key, _ in skins]}},
+                "geometry": "Geometry.default",
                 "materials": [{"*": "Material.default"}],
                 "textures": ["Array.skins[query.variant]"],
             }
@@ -115,4 +120,4 @@ entity["events"]["minecraft:entity_spawned"] = {
 }
 write(BP_ENTITY, doc)
 
-print(f"skins: {len(skins)} ({', '.join(key for key, _, _ in skins)})")
+print(f"skins: {len(skins)} ({', '.join(key for key, _ in skins)})")

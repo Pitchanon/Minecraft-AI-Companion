@@ -138,6 +138,51 @@
         "minecraft:variant": {
           "value": 1
         }
+      },
+      "bot:skin_2": {
+        "minecraft:variant": {
+          "value": 2
+        }
+      },
+      "bot:skin_3": {
+        "minecraft:variant": {
+          "value": 3
+        }
+      },
+      "bot:skin_4": {
+        "minecraft:variant": {
+          "value": 4
+        }
+      },
+      "bot:skin_5": {
+        "minecraft:variant": {
+          "value": 5
+        }
+      },
+      "bot:skin_6": {
+        "minecraft:variant": {
+          "value": 6
+        }
+      },
+      "bot:skin_7": {
+        "minecraft:variant": {
+          "value": 7
+        }
+      },
+      "bot:skin_8": {
+        "minecraft:variant": {
+          "value": 8
+        }
+      },
+      "bot:skin_9": {
+        "minecraft:variant": {
+          "value": 9
+        }
+      },
+      "bot:skin_10": {
+        "minecraft:variant": {
+          "value": 10
+        }
       }
     },
     "components": {
@@ -156,7 +201,7 @@
       },
       "minecraft:collision_box": {
         "width": 0.6,
-        "height": 1.8
+        "height": 0.7
       },
       "minecraft:movement": {
         "value": 0.3
@@ -246,6 +291,78 @@
                 "add": {
                   "component_groups": [
                     "bot:skin_1"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_2"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_3"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_4"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_5"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_6"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_7"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_8"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_9"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_10"
                   ]
                 }
               }

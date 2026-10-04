@@ -5,18 +5,21 @@
       "arrays": {
         "textures": {
           "Array.skins": [
-            "Texture.steve",
-            "Texture.alex"
-          ]
-        },
-        "geometries": {
-          "Array.geos": [
-            "Geometry.default",
-            "Geometry.slim"
+            "Texture.tabby",
+            "Texture.black",
+            "Texture.red",
+            "Texture.siamese",
+            "Texture.british",
+            "Texture.calico",
+            "Texture.persian",
+            "Texture.ragdoll",
+            "Texture.white",
+            "Texture.jellie",
+            "Texture.all_black"
           ]
         }
       },
-      "geometry": "Array.geos[query.variant]",
+      "geometry": "Geometry.default",
       "materials": [
         {
           "*": "Material.default"

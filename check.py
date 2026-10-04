@@ -78,8 +78,8 @@ for name, doc in docs.items():
 rc = controllers["controller.render.bot_companion"]["arrays"]
 skin_textures = rc["textures"]["Array.skins"]
 skin_variants = [g for g in groups if g.startswith("bot:skin_")]
-if not (len(skin_textures) == len(rc["geometries"]["Array.geos"]) == len(skin_variants)):
-    errors.append("skin textures, geometries and variant groups have different counts")
+if len(skin_textures) != len(skin_variants):
+    errors.append("skin textures and variant groups have different counts")
 for ref in skin_textures:
     key = ref.removeprefix("Texture.")
     if key not in client["textures"]:

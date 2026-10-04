@@ -1,45 +1,48 @@
 {
-  "format_version": "1.10.0",
+  "format_version": "1.8.0",
   "minecraft:client_entity": {
     "description": {
       "identifier": "bot:companion",
       "materials": {
-        "default": "entity_alphatest"
+        "default": "cat"
       },
       "textures": {
-        "steve": "textures/entity/steve",
-        "alex": "textures/entity/alex"
+        "tabby": "textures/entity/cat/tabby",
+        "black": "textures/entity/cat/tuxedo",
+        "red": "textures/entity/cat/redtabby",
+        "siamese": "textures/entity/cat/siamesecat",
+        "british": "textures/entity/cat/britishshorthair",
+        "calico": "textures/entity/cat/calico",
+        "persian": "textures/entity/cat/persian",
+        "ragdoll": "textures/entity/cat/ragdoll",
+        "white": "textures/entity/cat/white",
+        "jellie": "textures/entity/cat/jellie",
+        "all_black": "textures/entity/cat/allblackcat"
       },
       "geometry": {
-        "default": "geometry.humanoid.custom",
-        "slim": "geometry.humanoid.customSlim"
+        "default": "geometry.cat"
       },
       "scripts": {
-        "scale": "0.9375",
         "pre_animation": [
-          "variable.tcos0 = (Math.cos(query.modified_distance_moved * 38.17) * query.modified_move_speed / variable.gliding_speed_value) * 57.3;"
+          "variable.state = query.modified_move_speed > 0.05 ? 3 : 2;"
         ]
       },
       "animations": {
-        "look_at_target_default": "animation.humanoid.look_at_target.default",
-        "look_at_target_gliding": "animation.humanoid.look_at_target.gliding",
-        "look_at_target_swimming": "animation.humanoid.look_at_target.swimming",
-        "move": "animation.humanoid.move",
-        "attack.rotations": "animation.humanoid.attack.rotations",
-        "bob": "animation.humanoid.bob"
+        "sneak": "animation.cat.sneak",
+        "walk": "animation.cat.walk",
+        "sprint": "animation.cat.sprint",
+        "sit": "animation.cat.sit",
+        "lie_down": "animation.cat.lie_down",
+        "baby_sit": "animation.cat.baby_sit",
+        "baby_lie_down": "animation.cat.baby_lie_down",
+        "look_at_target": "animation.common.look_at_target"
       },
       "animation_controllers": [
         {
-          "look_at_target": "controller.animation.humanoid.look_at_target"
+          "look_at_target": "controller.animation.cat.look_at_target"
         },
         {
-          "move": "controller.animation.humanoid.move"
-        },
-        {
-          "attack": "controller.animation.humanoid.attack"
-        },
-        {
-          "bob": "controller.animation.humanoid.bob"
+          "move": "controller.animation.cat.move"
         }
       ],
       "render_controllers": [
