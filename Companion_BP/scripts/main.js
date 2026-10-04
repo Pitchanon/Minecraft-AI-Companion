@@ -1,5 +1,5 @@
 import { world, system, ItemStack, CommandPermissionLevel, CustomCommandStatus } from "@minecraft/server";
-import { ActionFormData } from "@minecraft/server-ui";
+import { ActionFormData, FormCancelationReason } from "@minecraft/server-ui";
 import {
   anyJobRunning,
   cancelTask,
@@ -177,6 +177,19 @@ const ACTIONS = {
   helper: toggleHelper,
 };
 
+const playersInMenu = new Set();
+
+// A form opened right after another one closes can come back as UserBusy and never show,
+// so wait a moment and try again
+async function showForm(player, form) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const res = await form.show(player);
+    if (res.cancelationReason !== FormCancelationReason.UserBusy) return res;
+    await system.waitTicks(5);
+  }
+  return undefined;
+}
+
 async function openWorkMenu(player) {
   const helperOn = !!player.getDynamicProperty(HELPER_PROP);
   const buttons = [
@@ -192,9 +205,9 @@ async function openWorkMenu(player) {
         "§dช่วยตามที่ฉันทำ:§r เมื่อเปิดไว้ ถ้าคุณตัดไม้หรือขุดแร่ก้อนแรก บอทจะช่วยทำส่วนที่เหลือของต้นหรือสายแร่นั้น"
     );
   for (const [label, icon] of buttons) form.button(label, icon);
-  const res = await form.show(player);
-  if (res.canceled || res.selection === undefined) return;
-  buttons[res.selection][2](player);
+  const res = await showForm(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  await buttons[res.selection][2](player);
 }
 
 async function confirmRemove(player) {
@@ -203,8 +216,8 @@ async function confirmRemove(player) {
     .body("บอทของคุณทุกตัวจะหายไป ของที่ฝากไว้จะหล่นที่พื้น\nแน่ใจไหม?")
     .button("ใช่ ส่งกลับบ้าน", "textures/ui/trash")
     .button("ไม่ใช่", "textures/ui/cancel");
-  const res = await form.show(player);
-  if (!res.canceled && res.selection === 0) removeBots(player);
+  const res = await showForm(player, form);
+  if (res && !res.canceled && res.selection === 0) removeBots(player);
 }
 
 async function openMenu(player) {
@@ -228,9 +241,9 @@ async function openMenu(player) {
     );
   for (const [label, icon] of buttons) form.button(label, icon);
 
-  const res = await form.show(player);
-  if (res.canceled || res.selection === undefined) return;
-  buttons[res.selection][2](player);
+  const res = await showForm(player, form);
+  if (!res || res.canceled || res.selection === undefined) return;
+  await buttons[res.selection][2](player);
 }
 
 function registerBotCommand(registry, name, description, action) {
@@ -266,8 +279,15 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry: registry }) => {
   registerBotCommand(registry, "helper", "เปิด/ปิดโหมดให้บอทช่วยตามที่คุณทำ", ACTIONS.helper);
 });
 
-world.afterEvents.itemUse.subscribe(({ itemStack, source: player }) => {
-  if (itemStack?.typeId === REMOTE_TYPE) openMenu(player);
+// One menu at a time per player, so a second use of the remote while a menu chain is open does nothing
+world.afterEvents.itemUse.subscribe(async ({ itemStack, source: player }) => {
+  if (itemStack?.typeId !== REMOTE_TYPE || playersInMenu.has(player.id)) return;
+  playersInMenu.add(player.id);
+  try {
+    await openMenu(player);
+  } finally {
+    playersInMenu.delete(player.id);
+  }
 });
 
 world.afterEvents.playerBreakBlock.subscribe(({ player, block, brokenBlockPermutation }) => {
