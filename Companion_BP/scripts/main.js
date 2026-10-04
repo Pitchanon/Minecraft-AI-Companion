@@ -177,73 +177,72 @@ const ACTIONS = {
   helper: toggleHelper,
 };
 
+const MENU_COOLDOWN_TICKS = 20; // ignore remote uses for 1s after a menu closes
+const REMOVE_CONFIRM_TICKS = 10 * 20;
 const playersInMenu = new Set();
+const menuClosedTick = new Map(); // player id -> tick the last menu closed
+const removeArmedTick = new Map(); // player id -> tick "ส่งบอทกลับบ้าน" was pressed once
 
-// A form opened right after another one closes can come back as UserBusy and never show,
-// so wait a moment and try again
+// A form can come back as UserBusy when another screen is still closing; wait and try again
 async function showForm(player, form) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const res = await form.show(player);
     if (res.cancelationReason !== FormCancelationReason.UserBusy) return res;
     await system.waitTicks(5);
   }
+  console.warn(`[bot] menu for ${player.name} stayed busy, gave up`);
   return undefined;
 }
 
-async function openWorkMenu(player) {
-  const helperOn = !!player.getDynamicProperty(HELPER_PROP);
-  const buttons = [
-    ["ตัดต้นไม้ใกล้ ๆ 1 ต้น", "textures/items/iron_axe", ACTIONS.chop],
-    ["ขุดแร่ใกล้ ๆ", "textures/items/iron_pickaxe", ACTIONS.mine],
-    [helperOn ? "ช่วยตามที่ฉันทำ: §aเปิดอยู่" : "ช่วยตามที่ฉันทำ: §cปิดอยู่", "textures/items/book_enchanted", ACTIONS.helper],
-  ];
-  const form = new ActionFormData()
-    .title("สั่งงานบอท")
-    .body(
-      "บอทจะทำงานรอบตัวคุณไม่เกิน 16 บล็อก แล้วเอาของมาให้\n" +
-        "ต่อยบอท 3 ครั้งเพื่อให้หยุดกลางคัน\n\n" +
-        "§dช่วยตามที่ฉันทำ:§r เมื่อเปิดไว้ ถ้าคุณตัดไม้หรือขุดแร่ก้อนแรก บอทจะช่วยทำส่วนที่เหลือของต้นหรือสายแร่นั้น"
-    );
-  for (const [label, icon] of buttons) form.button(label, icon);
-  const res = await showForm(player, form);
-  if (!res || res.canceled || res.selection === undefined) return;
-  await buttons[res.selection][2](player);
+const removeArmed = (player) => {
+  const armed = removeArmedTick.get(player.id);
+  return armed !== undefined && system.currentTick - armed <= REMOVE_CONFIRM_TICKS;
+};
+
+// Removing every bot is the one destructive button, so it needs a second press within 10s.
+// This is done with two menu opens instead of a confirm dialog: a form opened from another
+// form's answer is what made the remote menu jump back before.
+function pressRemove(player) {
+  if (removeArmed(player)) {
+    removeArmedTick.delete(player.id);
+    removeBots(player);
+    return;
+  }
+  removeArmedTick.set(player.id, system.currentTick);
+  player.sendMessage(PREFIX + "กด \"ส่งบอทกลับบ้าน\" อีกครั้งภายใน 10 วินาทีเพื่อยืนยัน");
 }
 
-async function confirmRemove(player) {
-  const form = new ActionFormData()
-    .title("ส่งบอทกลับบ้าน")
-    .body("บอทของคุณทุกตัวจะหายไป ของที่ฝากไว้จะหล่นที่พื้น\nแน่ใจไหม?")
-    .button("ใช่ ส่งกลับบ้าน", "textures/ui/trash")
-    .button("ไม่ใช่", "textures/ui/cancel");
-  const res = await showForm(player, form);
-  if (res && !res.canceled && res.selection === 0) removeBots(player);
-}
-
+// One flat menu: every action runs straight from this form, no second form is opened
 async function openMenu(player) {
   const count = ownedBots(player).length;
   const full = count >= MAX_BOTS_PER_PLAYER;
+  const helperOn = !!player.getDynamicProperty(HELPER_PROP);
   const buttons = [
-    [full ? "§7เรียกบอทตัวใหม่ (เต็มแล้ว)" : "เรียกบอทตัวใหม่", "textures/items/egg", ACTIONS.summon],
-    ["สั่งงาน (ตัดไม้ / ขุดแร่)", "textures/items/iron_axe", openWorkMenu],
     ["เรียกบอทมาหา", "textures/items/ender_pearl", ACTIONS.here],
+    ["ตัดต้นไม้ใกล้ ๆ 1 ต้น", "textures/items/iron_axe", ACTIONS.chop],
+    ["ขุดแร่ใกล้ ๆ", "textures/items/iron_pickaxe", ACTIONS.mine],
+    [helperOn ? "ช่วยตามที่ฉันทำ: §aเปิดอยู่" : "ช่วยตามที่ฉันทำ: §cปิดอยู่", "textures/items/book_enchanted", ACTIONS.helper],
     ["ให้เดินตาม", "textures/items/lead", ACTIONS.follow],
     ["ให้รอตรงนี้", "textures/items/bed_red", ACTIONS.sit],
     ["หยุดสิ่งที่ทำอยู่", "textures/ui/cancel", ACTIONS.stop],
-    ["ส่งบอทกลับบ้าน", "textures/ui/trash", confirmRemove],
+    [full ? "§7เรียกบอทตัวใหม่ (เต็มแล้ว)" : "เรียกบอทตัวใหม่", "textures/items/egg", ACTIONS.summon],
+    [removeArmed(player) ? "§cยืนยันส่งบอทกลับบ้าน" : "ส่งบอทกลับบ้าน", "textures/ui/trash", pressRemove],
   ];
 
   const form = new ActionFormData()
     .title("รีโมทเพื่อนบอท")
     .body(
       `บอทของคุณ: §a${count}/${MAX_BOTS_PER_PLAYER}§r ตัว\n\n` +
-        "§dคำแนะนำ:§r ต่อยบอท 3 ครั้งติดกันเพื่อสั่งให้หยุด\nถ้าบอทติดหรืออยู่ไกล กด \"เรียกบอทมาหา\""
+        "§dตัดไม้ / ขุดแร่:§r บอทเดินไปทำรอบตัวคุณไม่เกิน 16 บล็อก แล้วเอาของมาให้\n" +
+        "§dช่วยตามที่ฉันทำ:§r เปิดไว้แล้วคุณตัดไม้หรือขุดแร่ก้อนแรก บอทจะทำส่วนที่เหลือให้\n" +
+        "§dหยุด:§r ต่อยบอท 3 ครั้งติดกัน\n" +
+        "§dบอทติดหรืออยู่ไกล:§r กด \"เรียกบอทมาหา\""
     );
   for (const [label, icon] of buttons) form.button(label, icon);
 
   const res = await showForm(player, form);
   if (!res || res.canceled || res.selection === undefined) return;
-  await buttons[res.selection][2](player);
+  buttons[res.selection][2](player);
 }
 
 function registerBotCommand(registry, name, description, action) {
@@ -279,14 +278,18 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry: registry }) => {
   registerBotCommand(registry, "helper", "เปิด/ปิดโหมดให้บอทช่วยตามที่คุณทำ", ACTIONS.helper);
 });
 
-// One menu at a time per player, so a second use of the remote while a menu chain is open does nothing
+// One click can arrive as more than one itemUse. Ignore uses while a menu is open and for a
+// moment after it closes, so a leftover use does not open the menu again.
 world.afterEvents.itemUse.subscribe(async ({ itemStack, source: player }) => {
   if (itemStack?.typeId !== REMOTE_TYPE || playersInMenu.has(player.id)) return;
+  const closed = menuClosedTick.get(player.id);
+  if (closed !== undefined && system.currentTick - closed < MENU_COOLDOWN_TICKS) return;
   playersInMenu.add(player.id);
   try {
     await openMenu(player);
   } finally {
     playersInMenu.delete(player.id);
+    menuClosedTick.set(player.id, system.currentTick);
   }
 });
 
