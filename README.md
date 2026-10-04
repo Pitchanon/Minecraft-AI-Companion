@@ -14,11 +14,11 @@ Add-on นี้ทำโดยพ่อของ Natthawat Seneewong Na Ayuttha
 ./build.sh
 ```
 
-คำสั่งนี้สร้างรายการลายแมวด้วย `gen_skins.py` แล้วตรวจไฟล์ด้วย `check.py` ก่อน จากนั้นจึงสร้าง `dist/NatthawatAICompanion.mcaddon` ซึ่งเป็นไฟล์ zip ที่มีทั้ง Behavior Pack และ Resource Pack ไม่ต้องติดตั้งเครื่องมือเพิ่ม เพราะใช้แค่ `zip`, `python3` และ `node` ที่มีในเครื่องอยู่แล้ว
+คำสั่งนี้สร้างรายการลายแมวด้วย `gen_skins.py` แล้วตรวจไฟล์ด้วย `check.py` ก่อน จากนั้นจึงสร้าง `dist/NatthawatAICompanion_<version>.mcaddon` (เช่น `NatthawatAICompanion_1_4_0.mcaddon` เลขเวอร์ชันมาจาก `Companion_BP/manifest.json`) ซึ่งเป็นไฟล์ zip ที่มีทั้ง Behavior Pack และ Resource Pack ไม่ต้องติดตั้งเครื่องมือเพิ่ม เพราะใช้แค่ `zip`, `python3` และ `node` ที่มีในเครื่องอยู่แล้ว
 
 ## ติดตั้งบน Windows
 
-1. ส่งไฟล์ `NatthawatAICompanion.mcaddon` ไปที่เครื่อง Windows แล้วดับเบิลคลิก เกมจะเปิดขึ้นมาและ import ทั้งสอง pack ให้เอง
+1. ส่งไฟล์ `NatthawatAICompanion_<version>.mcaddon` ไปที่เครื่อง Windows แล้วดับเบิลคลิก เกมจะเปิดขึ้นมาและ import ทั้งสอง pack ให้เอง
 2. สร้างโลกใหม่ หรือแก้ไขโลกเดิม แล้วไปที่ **Behavior Packs** เลือก **Natthawat AI Companion** และกด Activate (Resource Pack จะถูกเปิดตามให้อัตโนมัติ)
 3. เข้าโลก ผู้เล่นจะได้รับ **รีโมทเพื่อนบอท** หนึ่งอันตอนเข้าโลกครั้งแรก
 
@@ -141,5 +141,5 @@ Companion_RP/                 Resource Pack
   texts/en_US.lang
 gen_skins.py                  สร้างรายการลายแมวสุ่ม
 check.py                      ตรวจไฟล์ก่อน build
-build.sh                      สร้าง dist/NatthawatAICompanion.mcaddon
+build.sh                      สร้าง dist/NatthawatAICompanion_<version>.mcaddon
 ```
