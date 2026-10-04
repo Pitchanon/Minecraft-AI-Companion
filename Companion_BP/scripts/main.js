@@ -390,6 +390,27 @@ system.afterEvents.scriptEventReceive.subscribe(({ id, message }) => {
 });
 
 // /summon bot:companion skips the per-player limit, so cap the world total here
+// /bot:debug: show the owner every hit their bots give or take, and each bot's combat state
+world.afterEvents.entityHurt.subscribe(({ hurtEntity, damage, damageSource }) => {
+  if (!isActiveCopy()) return;
+  const attacker = damageSource.damagingEntity;
+  const bot = attacker?.typeId === BOT_TYPE ? attacker : hurtEntity.typeId === BOT_TYPE ? hurtEntity : undefined;
+  if (!bot || !bot.isValid) return;
+  const owner = world.getEntity(bot.getDynamicProperty(OWNER_PROP) ?? "");
+  if (owner?.typeId !== "minecraft:player") return;
+  if (bot === attacker) debug(owner, `bot hit ${hurtEntity.typeId} for ${damage}`);
+  else debug(owner, `bot was hit by ${attacker?.typeId ?? damageSource.cause} for ${damage}`);
+});
+
+system.runInterval(() => {
+  for (const player of world.getAllPlayers()) {
+    if (!player.getDynamicProperty(DEBUG_PROP) || !isActiveCopy()) continue;
+    for (const bot of ownedBots(player)) {
+      debug(player, `${bot.nameTag}: fighting=${bot.getProperty("bot:fighting")} busy=${isBusy(bot)}`);
+    }
+  }
+}, 5 * 20);
+
 world.afterEvents.entitySpawn.subscribe(({ entity }) => {
   if (entity.typeId !== BOT_TYPE) return;
   if (loadedBots().length > MAX_BOTS_IN_WORLD) entity.remove();

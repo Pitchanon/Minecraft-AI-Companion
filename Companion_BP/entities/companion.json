@@ -1,10 +1,17 @@
 {
-  "format_version": "1.21.0",
+  "format_version": "1.21.100",
   "minecraft:entity": {
     "description": {
       "identifier": "bot:companion",
       "is_spawnable": false,
-      "is_summonable": true
+      "is_summonable": true,
+      "properties": {
+        "bot:fighting": {
+          "type": "bool",
+          "default": false,
+          "client_sync": false
+        }
+      }
     },
     "component_groups": {
       "bot:wild": {
@@ -75,7 +82,7 @@
             }
           }
         },
-        "minecraft:behavior.melee_attack": {
+        "minecraft:behavior.melee_box_attack": {
           "priority": 3,
           "speed_multiplier": 1.2,
           "track_target": true
@@ -383,6 +390,9 @@
             "bot:combat",
             "bot:following"
           ]
+        },
+        "set_property": {
+          "bot:fighting": true
         }
       },
       "bot:sit": {
@@ -423,6 +433,9 @@
           "component_groups": [
             "bot:following"
           ]
+        },
+        "set_property": {
+          "bot:fighting": false
         }
       },
       "bot:resume_combat": {
@@ -430,6 +443,9 @@
           "component_groups": [
             "bot:combat"
           ]
+        },
+        "set_property": {
+          "bot:fighting": true
         }
       },
       "bot:work_start": {
@@ -444,6 +460,9 @@
           "component_groups": [
             "bot:working"
           ]
+        },
+        "set_property": {
+          "bot:fighting": false
         }
       },
       "bot:work_end": {
@@ -457,6 +476,9 @@
             "bot:following",
             "bot:combat"
           ]
+        },
+        "set_property": {
+          "bot:fighting": true
         }
       }
     }
