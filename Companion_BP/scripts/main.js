@@ -11,12 +11,36 @@ import {
   mineOres,
   removeStrayWaypoints,
 } from "./work.js";
+import { VERSION } from "./version.js";
 
 const BOT_TYPE = "bot:companion";
 const REMOTE_TYPE = "bot:remote";
 const OWNER_PROP = "bot:owner"; // on the bot: id of the player who owns it
 const GOT_REMOTE_PROP = "bot:got_remote"; // on the player: remote already handed out once
 const HELPER_PROP = "bot:helper"; // on the player: bot finishes trees/veins the player starts
+const DEBUG_PROP = "bot:debug"; // on the player: show remote/menu events in chat
+
+// If the world loads this add-on twice (e.g. an old version left active next to the new one),
+// every copy reacts to the same remote press and each opens its own menu. Copies announce
+// themselves with a script event; only the newest copy acts, and players are warned.
+const INSTANCE_ID = Math.random().toString(36).slice(2, 10);
+const otherCopies = new Map(); // instance id -> version of other loaded copies
+let commandsTaken = false; // another copy registered the /bot: commands first
+
+function compareVersions(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+}
+
+function isActiveCopy() {
+  for (const [id, version] of otherCopies) {
+    const cmp = compareVersions(version, VERSION);
+    if (cmp > 0 || (cmp === 0 && id > INSTANCE_ID)) return false;
+  }
+  return true;
+}
 const DIMENSIONS = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
 const PREFIX = "§b[บอท]§r ";
 
@@ -175,78 +199,106 @@ const ACTIONS = {
   chop: (p) => assignWork(p, chopTree),
   mine: (p) => assignWork(p, mineOres),
   helper: toggleHelper,
+  debug: (p) => toggleDebug(p),
 };
 
-const MENU_COOLDOWN_TICKS = 20; // ignore remote uses for 1s after a menu closes
-const REMOVE_CONFIRM_TICKS = 10 * 20;
+// A new press of the remote needs this many quiet ticks since the previous itemUse event or
+// since the last menu closed. While the use button is held (or the game still thinks it is
+// after a menu closes) itemUse keeps arriving every few ticks, and each of those must not
+// open the menu again.
+const NEW_PRESS_GAP_TICKS = 10;
 const playersInMenu = new Set();
+const lastUseTick = new Map(); // player id -> tick of the latest remote itemUse event
 const menuClosedTick = new Map(); // player id -> tick the last menu closed
-const removeArmedTick = new Map(); // player id -> tick "ส่งบอทกลับบ้าน" was pressed once
 
-// A form can come back as UserBusy when another screen is still closing; wait and try again
-async function showForm(player, form) {
+function debug(player, text) {
+  if (player.getDynamicProperty(DEBUG_PROP)) player.sendMessage(`§7[debug t${system.currentTick}] ${text}`);
+}
+
+// A form can come back as UserBusy while another screen is still closing; wait and try again
+async function showForm(player, form, name) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const res = await form.show(player);
+    debug(player, `${name}: ${res.canceled ? res.cancelationReason : "selected " + res.selection}`);
     if (res.cancelationReason !== FormCancelationReason.UserBusy) return res;
     await system.waitTicks(5);
   }
-  console.warn(`[bot] menu for ${player.name} stayed busy, gave up`);
+  console.warn(`[bot] ${name} for ${player.name} stayed busy, gave up`);
   return undefined;
 }
 
-const removeArmed = (player) => {
-  const armed = removeArmedTick.get(player.id);
-  return armed !== undefined && system.currentTick - armed <= REMOVE_CONFIRM_TICKS;
-};
-
-// Removing every bot is the one destructive button, so it needs a second press within 10s.
-// This is done with two menu opens instead of a confirm dialog: a form opened from another
-// form's answer is what made the remote menu jump back before.
-function pressRemove(player) {
-  if (removeArmed(player)) {
-    removeArmedTick.delete(player.id);
-    removeBots(player);
-    return;
-  }
-  removeArmedTick.set(player.id, system.currentTick);
-  player.sendMessage(PREFIX + "กด \"ส่งบอทกลับบ้าน\" อีกครั้งภายใน 10 วินาทีเพื่อยืนยัน");
-}
-
-// One flat menu: every action runs straight from this form, no second form is opened
-async function openMenu(player) {
-  const count = ownedBots(player).length;
-  const full = count >= MAX_BOTS_PER_PLAYER;
+async function openWorkMenu(player) {
   const helperOn = !!player.getDynamicProperty(HELPER_PROP);
   const buttons = [
-    ["เรียกบอทมาหา", "textures/items/ender_pearl", ACTIONS.here],
     ["ตัดต้นไม้ใกล้ ๆ 1 ต้น", "textures/items/iron_axe", ACTIONS.chop],
     ["ขุดแร่ใกล้ ๆ", "textures/items/iron_pickaxe", ACTIONS.mine],
     [helperOn ? "ช่วยตามที่ฉันทำ: §aเปิดอยู่" : "ช่วยตามที่ฉันทำ: §cปิดอยู่", "textures/items/book_enchanted", ACTIONS.helper],
+  ];
+  const form = new ActionFormData()
+    .title("สั่งงานบอท")
+    .body(
+      "บอทจะทำงานรอบตัวคุณไม่เกิน 16 บล็อก แล้วเอาของมาให้\n" +
+        "ต่อยบอท 3 ครั้งเพื่อให้หยุดกลางคัน\n\n" +
+        "§dช่วยตามที่ฉันทำ:§r เมื่อเปิดไว้ ถ้าคุณตัดไม้หรือขุดแร่ก้อนแรก บอทจะช่วยทำส่วนที่เหลือของต้นหรือสายแร่นั้น"
+    );
+  for (const [label, icon] of buttons) form.button(label, icon);
+  const res = await showForm(player, form, "work menu");
+  if (!res || res.canceled || res.selection === undefined) return;
+  buttons[res.selection][2](player);
+}
+
+async function confirmRemove(player) {
+  const form = new ActionFormData()
+    .title("ส่งบอทกลับบ้าน")
+    .body("บอทของคุณทุกตัวจะหายไป ของที่ฝากไว้จะหล่นที่พื้น\nแน่ใจไหม?")
+    .button("ใช่ ส่งกลับบ้าน", "textures/ui/trash")
+    .button("ไม่ใช่", "textures/ui/cancel");
+  const res = await showForm(player, form, "confirm remove");
+  if (res && !res.canceled && res.selection === 0) removeBots(player);
+}
+
+// Let the main menu finish closing before the next screen opens
+async function thenOpen(player, openNext) {
+  await system.waitTicks(2);
+  await openNext(player);
+}
+
+async function openMenu(player) {
+  const count = ownedBots(player).length;
+  const full = count >= MAX_BOTS_PER_PLAYER;
+  const buttons = [
+    [full ? "§7เรียกบอทตัวใหม่ (เต็มแล้ว)" : "เรียกบอทตัวใหม่", "textures/items/egg", ACTIONS.summon],
+    ["สั่งงาน (ตัดไม้ / ขุดแร่)", "textures/items/iron_axe", (p) => thenOpen(p, openWorkMenu)],
+    ["เรียกบอทมาหา", "textures/items/ender_pearl", ACTIONS.here],
     ["ให้เดินตาม", "textures/items/lead", ACTIONS.follow],
     ["ให้รอตรงนี้", "textures/items/bed_red", ACTIONS.sit],
     ["หยุดสิ่งที่ทำอยู่", "textures/ui/cancel", ACTIONS.stop],
-    [full ? "§7เรียกบอทตัวใหม่ (เต็มแล้ว)" : "เรียกบอทตัวใหม่", "textures/items/egg", ACTIONS.summon],
-    [removeArmed(player) ? "§cยืนยันส่งบอทกลับบ้าน" : "ส่งบอทกลับบ้าน", "textures/ui/trash", pressRemove],
+    ["ส่งบอทกลับบ้าน", "textures/ui/trash", (p) => thenOpen(p, confirmRemove)],
   ];
 
   const form = new ActionFormData()
     .title("รีโมทเพื่อนบอท")
     .body(
       `บอทของคุณ: §a${count}/${MAX_BOTS_PER_PLAYER}§r ตัว\n\n` +
-        "§dตัดไม้ / ขุดแร่:§r บอทเดินไปทำรอบตัวคุณไม่เกิน 16 บล็อก แล้วเอาของมาให้\n" +
-        "§dช่วยตามที่ฉันทำ:§r เปิดไว้แล้วคุณตัดไม้หรือขุดแร่ก้อนแรก บอทจะทำส่วนที่เหลือให้\n" +
-        "§dหยุด:§r ต่อยบอท 3 ครั้งติดกัน\n" +
-        "§dบอทติดหรืออยู่ไกล:§r กด \"เรียกบอทมาหา\""
+        "§dคำแนะนำ:§r ต่อยบอท 3 ครั้งติดกันเพื่อสั่งให้หยุด\nถ้าบอทติดหรืออยู่ไกล กด \"เรียกบอทมาหา\"\n\n" +
+        `§8v${VERSION}`
     );
   for (const [label, icon] of buttons) form.button(label, icon);
 
-  const res = await showForm(player, form);
+  const res = await showForm(player, form, "main menu");
   if (!res || res.canceled || res.selection === undefined) return;
-  buttons[res.selection][2](player);
+  await buttons[res.selection][2](player);
+}
+
+function toggleDebug(player) {
+  const on = !player.getDynamicProperty(DEBUG_PROP);
+  player.setDynamicProperty(DEBUG_PROP, on);
+  player.sendMessage(PREFIX + (on ? "เปิดโหมด debug ของรีโมทแล้ว" : "ปิดโหมด debug ของรีโมทแล้ว"));
 }
 
 function registerBotCommand(registry, name, description, action) {
-  registry.registerCommand(
+  try {
+    registry.registerCommand(
     {
       name: `bot:${name}`,
       description,
@@ -263,6 +315,11 @@ function registerBotCommand(registry, name, description, action) {
       return { status: CustomCommandStatus.Success };
     }
   );
+  } catch (e) {
+    if (e?.reason !== "AlreadyRegistered") throw e;
+    commandsTaken = true;
+    console.warn(`[bot] /bot:${name} is already registered by another copy of this add-on`);
+  }
 }
 
 system.beforeEvents.startup.subscribe(({ customCommandRegistry: registry }) => {
@@ -276,14 +333,18 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry: registry }) => {
   registerBotCommand(registry, "chop", "ให้บอทตัดต้นไม้ใกล้ ๆ 1 ต้น", ACTIONS.chop);
   registerBotCommand(registry, "mine", "ให้บอทขุดแร่ใกล้ ๆ", ACTIONS.mine);
   registerBotCommand(registry, "helper", "เปิด/ปิดโหมดให้บอทช่วยตามที่คุณทำ", ACTIONS.helper);
+  registerBotCommand(registry, "debug", "เปิด/ปิดการแสดงเหตุการณ์ของรีโมทในแชต (ไว้หาบั๊ก)", ACTIONS.debug);
 });
 
-// One click can arrive as more than one itemUse. Ignore uses while a menu is open and for a
-// moment after it closes, so a leftover use does not open the menu again.
 world.afterEvents.itemUse.subscribe(async ({ itemStack, source: player }) => {
-  if (itemStack?.typeId !== REMOTE_TYPE || playersInMenu.has(player.id)) return;
-  const closed = menuClosedTick.get(player.id);
-  if (closed !== undefined && system.currentTick - closed < MENU_COOLDOWN_TICKS) return;
+  if (itemStack?.typeId !== REMOTE_TYPE || !isActiveCopy()) return;
+  const now = system.currentTick;
+  const quietSince = Math.max(lastUseTick.get(player.id) ?? -Infinity, menuClosedTick.get(player.id) ?? -Infinity);
+  lastUseTick.set(player.id, now);
+  if (playersInMenu.has(player.id)) return debug(player, "remote use ignored: menu open");
+  if (now - quietSince < NEW_PRESS_GAP_TICKS) return debug(player, `remote use ignored: ${now - quietSince} ticks since last use/close`);
+
+  debug(player, "remote use opens menu");
   playersInMenu.add(player.id);
   try {
     await openMenu(player);
@@ -294,7 +355,7 @@ world.afterEvents.itemUse.subscribe(async ({ itemStack, source: player }) => {
 });
 
 world.afterEvents.playerBreakBlock.subscribe(({ player, block, brokenBlockPermutation }) => {
-  if (!player.getDynamicProperty(HELPER_PROP)) return;
+  if (!isActiveCopy() || !player.getDynamicProperty(HELPER_PROP)) return;
   const brokenType = brokenBlockPermutation.type.id;
   if (!isLog(brokenType) && !isOre(brokenType)) return;
   if (anyJobRunning()) return;
@@ -303,7 +364,29 @@ world.afterEvents.playerBreakBlock.subscribe(({ player, block, brokenBlockPermut
 });
 
 world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
-  if (initialSpawn && !player.getDynamicProperty(GOT_REMOTE_PROP)) giveRemote(player);
+  if (!initialSpawn || !isActiveCopy()) return;
+  if (!player.getDynamicProperty(GOT_REMOTE_PROP)) giveRemote(player);
+  player.sendMessage(PREFIX + `พร้อมแล้ว (v${VERSION})`);
+  if (otherCopies.size || commandsTaken) {
+    const versions = [VERSION, ...otherCopies.values()].join(", ");
+    player.sendMessage(
+      PREFIX +
+        `§cพบ add-on นี้เปิดอยู่มากกว่า 1 ชุดในโลกนี้ (${otherCopies.size ? versions : "มีชุดเก่าที่ไม่บอกเวอร์ชัน"}) ` +
+        "ให้ปิดชุดเก่าใน Behavior Packs ของโลก หรือลบใน Settings > Storage ไม่อย่างนั้นเมนูจะเด้งซ้ำ"
+    );
+  }
+});
+
+world.afterEvents.worldLoad.subscribe(() => system.sendScriptEvent("bot:hello", `${INSTANCE_ID}|${VERSION}`));
+
+system.afterEvents.scriptEventReceive.subscribe(({ id, message }) => {
+  if (id !== "bot:hello") return;
+  const [otherId, version] = message.split("|");
+  if (otherId === INSTANCE_ID || otherCopies.has(otherId)) return;
+  otherCopies.set(otherId, version);
+  console.warn(`[bot] another copy of this add-on is loaded: v${version} (this one is v${VERSION})`);
+  // answer so a copy that loaded later also learns about this one
+  system.sendScriptEvent("bot:hello", `${INSTANCE_ID}|${VERSION}`);
 });
 
 // /summon bot:companion skips the per-player limit, so cap the world total here
@@ -330,7 +413,7 @@ world.afterEvents.dataDrivenEntityTrigger.subscribe(
 );
 
 world.afterEvents.entityHitEntity.subscribe(({ damagingEntity: player, hitEntity: bot }) => {
-  if (bot.typeId !== BOT_TYPE || player.typeId !== "minecraft:player") return;
+  if (bot.typeId !== BOT_TYPE || player.typeId !== "minecraft:player" || !isActiveCopy()) return;
   if (!bot.getComponent("minecraft:is_tamed")) return;
   const owner = bot.getDynamicProperty(OWNER_PROP);
   if (owner && owner !== player.id) return;
@@ -348,6 +431,7 @@ world.afterEvents.entityHitEntity.subscribe(({ damagingEntity: player, hitEntity
 });
 
 system.runInterval(() => {
+  if (!isActiveCopy()) return;
   for (const player of world.getAllPlayers()) {
     const health = player.getComponent("minecraft:health");
     if (!health || health.currentValue <= 0 || health.currentValue > LOW_HEALTH) continue;
@@ -371,4 +455,7 @@ system.runInterval(() => {
   }
 }, 20);
 
-system.runInterval(() => removeStrayWaypoints(DIMENSIONS.map((id) => world.getDimension(id))), 10 * 20);
+// An inactive copy would see the active copy's waypoints as strays, so only the active copy cleans up
+system.runInterval(() => {
+  if (isActiveCopy()) removeStrayWaypoints(DIMENSIONS.map((id) => world.getDimension(id)));
+}, 10 * 20);
