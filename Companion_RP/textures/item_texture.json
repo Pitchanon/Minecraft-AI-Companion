@@ -1,0 +1,7 @@
+{
+  "resource_pack_name": "natthawat_companion",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "bot_remote": { "textures": "textures/items/bot_remote" }
+  }
+}

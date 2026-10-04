@@ -1,0 +1,294 @@
+{
+  "format_version": "1.21.0",
+  "minecraft:entity": {
+    "description": {
+      "identifier": "bot:companion",
+      "is_spawnable": false,
+      "is_summonable": true
+    },
+    "component_groups": {
+      "bot:wild": {
+        "minecraft:tameable": {
+          "probability": 1.0,
+          "tame_items": [
+            "apple",
+            "cookie"
+          ],
+          "tame_event": {
+            "event": "bot:on_tame",
+            "target": "self"
+          }
+        },
+        "minecraft:behavior.random_stroll": {
+          "priority": 8,
+          "speed_multiplier": 0.8
+        }
+      },
+      "bot:tamed": {
+        "minecraft:is_tamed": {},
+        "minecraft:inventory": {
+          "inventory_size": 27,
+          "container_type": "minecart_chest",
+          "restrict_to_owner": true
+        }
+      },
+      "bot:combat": {
+        "minecraft:behavior.owner_hurt_by_target": {
+          "priority": 1
+        },
+        "minecraft:behavior.owner_hurt_target": {
+          "priority": 2
+        },
+        "minecraft:behavior.nearest_attackable_target": {
+          "priority": 4,
+          "must_see": true,
+          "reselect_targets": true,
+          "entity_types": [
+            {
+              "filters": {
+                "all_of": [
+                  {
+                    "test": "is_family",
+                    "subject": "other",
+                    "value": "monster"
+                  },
+                  {
+                    "test": "is_family",
+                    "subject": "other",
+                    "operator": "!=",
+                    "value": "creeper"
+                  }
+                ]
+              },
+              "max_dist": 12
+            }
+          ]
+        },
+        "minecraft:behavior.hurt_by_target": {
+          "priority": 2,
+          "entity_types": {
+            "filters": {
+              "test": "is_family",
+              "subject": "other",
+              "operator": "!=",
+              "value": "player"
+            }
+          }
+        },
+        "minecraft:behavior.melee_attack": {
+          "priority": 3,
+          "speed_multiplier": 1.2,
+          "track_target": true
+        }
+      },
+      "bot:following": {
+        "minecraft:behavior.teleport_to_owner": {
+          "priority": 1,
+          "filters": {
+            "test": "owner_distance",
+            "operator": ">",
+            "value": 12
+          }
+        },
+        "minecraft:behavior.follow_owner": {
+          "priority": 6,
+          "speed_multiplier": 1.2,
+          "start_distance": 4,
+          "stop_distance": 2
+        },
+        "minecraft:behavior.random_stroll": {
+          "priority": 9,
+          "speed_multiplier": 0.8
+        }
+      },
+      "bot:staying": {
+        "minecraft:behavior.random_look_around": {
+          "priority": 9
+        }
+      },
+      "bot:skin_0": {
+        "minecraft:variant": {
+          "value": 0
+        }
+      },
+      "bot:skin_1": {
+        "minecraft:variant": {
+          "value": 1
+        }
+      }
+    },
+    "components": {
+      "minecraft:type_family": {
+        "family": [
+          "companion",
+          "mob"
+        ]
+      },
+      "minecraft:health": {
+        "value": 40,
+        "max": 40
+      },
+      "minecraft:attack": {
+        "damage": 6
+      },
+      "minecraft:collision_box": {
+        "width": 0.6,
+        "height": 1.8
+      },
+      "minecraft:movement": {
+        "value": 0.3
+      },
+      "minecraft:navigation.walk": {
+        "can_path_over_water": true,
+        "avoid_damage_blocks": true,
+        "can_open_doors": false
+      },
+      "minecraft:movement.basic": {},
+      "minecraft:jump.static": {},
+      "minecraft:can_climb": {},
+      "minecraft:physics": {},
+      "minecraft:pushable_by_entity": {},
+      "minecraft:pushable_by_block": {},
+      "minecraft:breathable": {
+        "total_supply": 15,
+        "suffocate_time": 0
+      },
+      "minecraft:nameable": {},
+      "minecraft:persistent": {},
+      "minecraft:healable": {
+        "items": [
+          {
+            "item": "apple",
+            "heal_amount": 8
+          },
+          {
+            "item": "cookie",
+            "heal_amount": 4
+          },
+          {
+            "item": "bread",
+            "heal_amount": 10
+          }
+        ]
+      },
+      "minecraft:damage_sensor": {
+        "triggers": [
+          {
+            "cause": "fall",
+            "deals_damage": false
+          },
+          {
+            "on_damage": {
+              "filters": {
+                "test": "is_family",
+                "subject": "other",
+                "value": "player"
+              }
+            },
+            "deals_damage": false
+          }
+        ]
+      },
+      "minecraft:behavior.float": {
+        "priority": 0
+      },
+      "minecraft:behavior.look_at_player": {
+        "priority": 7,
+        "look_distance": 6.0,
+        "probability": 0.05
+      }
+    },
+    "events": {
+      "minecraft:entity_spawned": {
+        "sequence": [
+          {
+            "add": {
+              "component_groups": [
+                "bot:wild"
+              ]
+            }
+          },
+          {
+            "randomize": [
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_0"
+                  ]
+                }
+              },
+              {
+                "weight": 1,
+                "add": {
+                  "component_groups": [
+                    "bot:skin_1"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "bot:on_tame": {
+        "remove": {
+          "component_groups": [
+            "bot:wild",
+            "bot:staying"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "bot:tamed",
+            "bot:combat",
+            "bot:following"
+          ]
+        }
+      },
+      "bot:sit": {
+        "remove": {
+          "component_groups": [
+            "bot:following"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "bot:staying"
+          ]
+        }
+      },
+      "bot:follow": {
+        "remove": {
+          "component_groups": [
+            "bot:staying"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "bot:following"
+          ]
+        }
+      },
+      "bot:stop": {
+        "remove": {
+          "component_groups": [
+            "bot:combat",
+            "bot:staying"
+          ]
+        },
+        "add": {
+          "component_groups": [
+            "bot:following"
+          ]
+        }
+      },
+      "bot:resume_combat": {
+        "add": {
+          "component_groups": [
+            "bot:combat"
+          ]
+        }
+      }
+    }
+  }
+}
