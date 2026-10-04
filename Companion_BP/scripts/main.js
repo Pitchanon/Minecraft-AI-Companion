@@ -25,7 +25,8 @@ const MAX_BOTS_IN_WORLD = 10;
 
 const LOW_HEALTH = 8; // 4 hearts
 const HEAL_RANGE = 16;
-const HEAL_COOLDOWN_TICKS = 30 * 20;
+const HEAL_AMOUNT = 6; // 3 hearts right away, then regeneration on top
+const HEAL_COOLDOWN_TICKS = 20 * 20;
 const lastHealTick = new Map();
 
 // Punching your own bot STOP_HITS times within STOP_WINDOW_TICKS means "stop what you're doing"
@@ -336,9 +337,14 @@ system.runInterval(() => {
       .find((bot) => bot.getDynamicProperty(OWNER_PROP) === player.id);
     if (!helper) continue;
 
-    player.addEffect("regeneration", 5 * 20, { amplifier: 1 });
-    player.sendMessage(PREFIX + "ระวังนะ! ฟื้นเลือดให้แล้ว");
     lastHealTick.set(player.id, system.currentTick);
+    try {
+      health.setCurrentValue(Math.min(health.currentValue + HEAL_AMOUNT, health.effectiveMax));
+      player.addEffect("minecraft:regeneration", 5 * 20, { amplifier: 1 });
+      player.sendMessage(PREFIX + "ระวังนะ! ฟื้นเลือดให้แล้ว");
+    } catch (e) {
+      console.warn(`[bot] heal failed: ${e}`);
+    }
   }
 }, 20);
 
