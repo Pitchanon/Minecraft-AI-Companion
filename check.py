@@ -51,7 +51,8 @@ for name, event in entity["events"].items():
         if g not in groups:
             errors.append(f"event {name} {op}s unknown group {g}")
 
-script = (root / "Companion_BP" / entry).read_text(encoding="utf-8")
+scripts = sorted((root / "Companion_BP/scripts").glob("*.js"))
+script = "\n".join(p.read_text(encoding="utf-8") for p in scripts)
 for ev in set(re.findall(r'triggerEvent\("([^"]+)"\)', script)):
     if ev not in entity["events"]:
         errors.append(f"script triggers unknown event {ev}")
@@ -85,8 +86,9 @@ if icon not in tex:
 elif not (root / "Companion_RP" / (tex[icon]["textures"] + ".png")).is_file():
     errors.append(f"texture file for {icon} missing")
 
-if subprocess.run(["node", "--check", str(root / "Companion_BP" / entry)]).returncode != 0:
-    errors.append("script has syntax errors")
+for path in scripts:
+    if subprocess.run(["node", "--check", str(path)]).returncode != 0:
+        errors.append(f"{path.name} has syntax errors")
 
 if errors:
     print("\n".join("FAIL " + e for e in errors))

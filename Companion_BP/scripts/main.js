@@ -1,10 +1,12 @@
 import { world, system, ItemStack, CommandPermissionLevel, CustomCommandStatus } from "@minecraft/server";
 import { ActionFormData } from "@minecraft/server-ui";
+import { cancelTask, chopTree, finishWhatPlayerStarted, isBusy, isLog, isOre, mineOres } from "./work.js";
 
 const BOT_TYPE = "bot:companion";
 const REMOTE_TYPE = "bot:remote";
 const OWNER_PROP = "bot:owner"; // on the bot: id of the player who owns it
 const GOT_REMOTE_PROP = "bot:got_remote"; // on the player: remote already handed out once
+const HELPER_PROP = "bot:helper"; // on the player: bot finishes trees/veins the player starts
 const DIMENSIONS = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"];
 const PREFIX = "§b[บอท]§r ";
 
@@ -22,8 +24,7 @@ const STOP_WINDOW_TICKS = 3 * 20;
 const CALM_TICKS = 10 * 20;
 const recentHits = new Map(); // bot id -> ticks of recent hits
 const calmTimers = new Map(); // bot id -> run id of the pending resume_combat
-// Long-running jobs (e.g. mining) put a cancel function here so a stop can end them
-const activeTasks = new Map();
+const WORK_RANGE = 16;
 
 // Script can only see bots in loaded chunks; a bot left far away is invisible until you go back.
 function loadedBots() {
@@ -82,8 +83,7 @@ function bringBots(player) {
 }
 
 function stopBot(bot) {
-  activeTasks.get(bot.id)?.();
-  activeTasks.delete(bot.id);
+  cancelTask(bot);
   bot.triggerEvent("bot:stop");
 
   const pending = calmTimers.get(bot.id);
@@ -108,6 +108,37 @@ function giveRemote(player) {
   player.setDynamicProperty(GOT_REMOTE_PROP, true);
 }
 
+// The closest bot of this player that is not already working
+function idleBot(player) {
+  const dist = (bot) => (bot.dimension.id === player.dimension.id ? distanceTo(bot, player) : Infinity);
+  return ownedBots(player)
+    .filter((bot) => !isBusy(bot) && dist(bot) <= WORK_RANGE * 2)
+    .sort((a, b) => dist(a) - dist(b))[0];
+}
+
+function distanceTo(a, b) {
+  const p = a.location;
+  const q = b.location;
+  return Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+}
+
+function assignWork(player, job) {
+  const bot = idleBot(player);
+  if (!bot) {
+    player.sendMessage(PREFIX + (ownedBots(player).length ? "บอททุกตัวกำลังทำงานอยู่ หรืออยู่ไกลเกินไป" : "ต้องเรียกบอทก่อนนะ"));
+    return;
+  }
+  job(bot, player, PREFIX);
+}
+
+function toggleHelper(player) {
+  const on = !player.getDynamicProperty(HELPER_PROP);
+  player.setDynamicProperty(HELPER_PROP, on);
+  player.sendMessage(
+    PREFIX + (on ? "เปิดโหมดช่วยงาน: ตัดไม้หรือขุดแร่ก้อนแรก แล้วบอทจะช่วยทำส่วนที่เหลือ" : "ปิดโหมดช่วยงานแล้ว")
+  );
+}
+
 const ACTIONS = {
   summon: summonBot,
   here: bringBots,
@@ -116,7 +147,30 @@ const ACTIONS = {
   stop: (p) => forEachBot(p, stopBot, "โอเค หยุดแล้วครับ"),
   remove: removeBots,
   remote: giveRemote,
+  chop: (p) => assignWork(p, chopTree),
+  mine: (p) => assignWork(p, mineOres),
+  helper: toggleHelper,
 };
+
+async function openWorkMenu(player) {
+  const helperOn = !!player.getDynamicProperty(HELPER_PROP);
+  const buttons = [
+    ["ตัดต้นไม้ใกล้ ๆ 1 ต้น", "textures/items/iron_axe", ACTIONS.chop],
+    ["ขุดแร่ใกล้ ๆ", "textures/items/iron_pickaxe", ACTIONS.mine],
+    [helperOn ? "ช่วยตามที่ฉันทำ: §aเปิดอยู่" : "ช่วยตามที่ฉันทำ: §cปิดอยู่", "textures/items/book_enchanted", ACTIONS.helper],
+  ];
+  const form = new ActionFormData()
+    .title("สั่งงานบอท")
+    .body(
+      "บอทจะทำงานรอบตัวคุณไม่เกิน 16 บล็อก แล้วเอาของมาให้\n" +
+        "ต่อยบอท 3 ครั้งเพื่อให้หยุดกลางคัน\n\n" +
+        "§dช่วยตามที่ฉันทำ:§r เมื่อเปิดไว้ ถ้าคุณตัดไม้หรือขุดแร่ก้อนแรก บอทจะช่วยทำส่วนที่เหลือของต้นหรือสายแร่นั้น"
+    );
+  for (const [label, icon] of buttons) form.button(label, icon);
+  const res = await form.show(player);
+  if (res.canceled || res.selection === undefined) return;
+  buttons[res.selection][2](player);
+}
 
 async function confirmRemove(player) {
   const form = new ActionFormData()
@@ -133,6 +187,7 @@ async function openMenu(player) {
   const full = count >= MAX_BOTS_PER_PLAYER;
   const buttons = [
     [full ? "§7เรียกบอทตัวใหม่ (เต็มแล้ว)" : "เรียกบอทตัวใหม่", "textures/items/egg", ACTIONS.summon],
+    ["สั่งงาน (ตัดไม้ / ขุดแร่)", "textures/items/iron_axe", openWorkMenu],
     ["เรียกบอทมาหา", "textures/items/ender_pearl", ACTIONS.here],
     ["ให้เดินตาม", "textures/items/lead", ACTIONS.follow],
     ["ให้รอตรงนี้", "textures/items/bed_red", ACTIONS.sit],
@@ -181,10 +236,21 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry: registry }) => {
   registerBotCommand(registry, "stop", "ให้บอทหยุดสิ่งที่ทำอยู่", ACTIONS.stop);
   registerBotCommand(registry, "kill", "ส่งบอททุกตัวกลับบ้าน (ลบบอท)", ACTIONS.remove);
   registerBotCommand(registry, "remote", "รับรีโมทบอทอันใหม่", ACTIONS.remote);
+  registerBotCommand(registry, "chop", "ให้บอทตัดต้นไม้ใกล้ ๆ 1 ต้น", ACTIONS.chop);
+  registerBotCommand(registry, "mine", "ให้บอทขุดแร่ใกล้ ๆ", ACTIONS.mine);
+  registerBotCommand(registry, "helper", "เปิด/ปิดโหมดให้บอทช่วยตามที่คุณทำ", ACTIONS.helper);
 });
 
 world.afterEvents.itemUse.subscribe(({ itemStack, source: player }) => {
   if (itemStack?.typeId === REMOTE_TYPE) openMenu(player);
+});
+
+world.afterEvents.playerBreakBlock.subscribe(({ player, block, brokenBlockPermutation }) => {
+  if (!player.getDynamicProperty(HELPER_PROP)) return;
+  const brokenType = brokenBlockPermutation.type.id;
+  if (!isLog(brokenType) && !isOre(brokenType)) return;
+  const bot = idleBot(player);
+  if (bot) finishWhatPlayerStarted(bot, player, brokenType, block.location, PREFIX);
 });
 
 world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
