@@ -22,8 +22,10 @@ if len(set(uuids)) != len(uuids):
     errors.append("manifest UUIDs are not unique")
 if not any(d.get("uuid") == rp["header"]["uuid"] for d in bp["dependencies"]):
     errors.append("BP does not depend on RP header uuid")
-if not any(d.get("uuid") == bp["header"]["uuid"] for d in rp["dependencies"]):
-    errors.append("RP does not depend on BP header uuid")
+# Only the BP depends on the RP. An RP that depends on the BP shows "Missing dependency" in the
+# global resource pack screen, where behavior packs are not loaded.
+if any(d.get("uuid") == bp["header"]["uuid"] for d in rp.get("dependencies", [])):
+    errors.append("RP must not depend on the BP")
 
 entry = next(m["entry"] for m in bp["modules"] if m["type"] == "script")
 if not (root / "Companion_BP" / entry).is_file():
