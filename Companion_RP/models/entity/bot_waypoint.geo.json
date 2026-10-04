@@ -1,0 +1,9 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": { "identifier": "geometry.bot_waypoint", "texture_width": 64, "texture_height": 64 },
+      "bones": [{ "name": "root", "pivot": [0, 0, 0] }]
+    }
+  ]
+}

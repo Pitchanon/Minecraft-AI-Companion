@@ -1,6 +1,16 @@
 import { world, system, ItemStack, CommandPermissionLevel, CustomCommandStatus } from "@minecraft/server";
 import { ActionFormData } from "@minecraft/server-ui";
-import { cancelTask, chopTree, finishWhatPlayerStarted, isBusy, isLog, isOre, mineOres } from "./work.js";
+import {
+  anyJobRunning,
+  cancelTask,
+  chopTree,
+  finishWhatPlayerStarted,
+  isBusy,
+  isLog,
+  isOre,
+  mineOres,
+  removeStrayWaypoints,
+} from "./work.js";
 
 const BOT_TYPE = "bot:companion";
 const REMOTE_TYPE = "bot:remote";
@@ -75,6 +85,7 @@ function bringBots(player) {
   forEachBot(
     player,
     (bot) => {
+      cancelTask(bot);
       bot.teleport(player.location, { dimension: player.dimension });
       bot.triggerEvent("bot:follow");
     },
@@ -99,13 +110,22 @@ function stopBot(bot) {
 
 function removeBots(player) {
   const bots = ownedBots(player);
-  bots.forEach((bot) => bot.remove());
+  bots.forEach((bot) => {
+    cancelTask(bot);
+    bot.remove();
+  });
   player.sendMessage(PREFIX + (bots.length ? `ส่งบอทกลับบ้านแล้ว ${bots.length} ตัว` : "ไม่มีบอทอยู่ใกล้ ๆ"));
 }
 
 function giveRemote(player) {
   player.getComponent("minecraft:inventory")?.container?.addItem(new ItemStack(REMOTE_TYPE, 1));
   player.setDynamicProperty(GOT_REMOTE_PROP, true);
+}
+
+// Leaving a job first gives combat back, then the new mode applies
+function switchMode(bot, event) {
+  cancelTask(bot);
+  bot.triggerEvent(event);
 }
 
 // The closest bot of this player that is not already working
@@ -123,6 +143,10 @@ function distanceTo(a, b) {
 }
 
 function assignWork(player, job) {
+  if (anyJobRunning()) {
+    player.sendMessage(PREFIX + "บอทกำลังทำงานอีกงานอยู่ รอให้เสร็จก่อน หรือกดหยุด");
+    return;
+  }
   const bot = idleBot(player);
   if (!bot) {
     player.sendMessage(PREFIX + (ownedBots(player).length ? "บอททุกตัวกำลังทำงานอยู่ หรืออยู่ไกลเกินไป" : "ต้องเรียกบอทก่อนนะ"));
@@ -142,8 +166,8 @@ function toggleHelper(player) {
 const ACTIONS = {
   summon: summonBot,
   here: bringBots,
-  follow: (p) => forEachBot(p, (bot) => bot.triggerEvent("bot:follow"), "ตามไปด้วยครับ!"),
-  sit: (p) => forEachBot(p, (bot) => bot.triggerEvent("bot:sit"), "รอตรงนี้นะครับ"),
+  follow: (p) => forEachBot(p, (bot) => switchMode(bot, "bot:follow"), "ตามไปด้วยครับ!"),
+  sit: (p) => forEachBot(p, (bot) => switchMode(bot, "bot:sit"), "รอตรงนี้นะครับ"),
   stop: (p) => forEachBot(p, stopBot, "โอเค หยุดแล้วครับ"),
   remove: removeBots,
   remote: giveRemote,
@@ -249,6 +273,7 @@ world.afterEvents.playerBreakBlock.subscribe(({ player, block, brokenBlockPermut
   if (!player.getDynamicProperty(HELPER_PROP)) return;
   const brokenType = brokenBlockPermutation.type.id;
   if (!isLog(brokenType) && !isOre(brokenType)) return;
+  if (anyJobRunning()) return;
   const bot = idleBot(player);
   if (bot) finishWhatPlayerStarted(bot, player, brokenType, block.location, PREFIX);
 });
@@ -316,3 +341,5 @@ system.runInterval(() => {
     lastHealTick.set(player.id, system.currentTick);
   }
 }, 20);
+
+system.runInterval(() => removeStrayWaypoints(DIMENSIONS.map((id) => world.getDimension(id))), 10 * 20);

@@ -60,10 +60,20 @@ for ev in set(re.findall(r'triggerEvent\("([^"]+)"\)', script)):
 client = docs["Companion_RP/entity/companion.entity.json"]["minecraft:client_entity"]["description"]
 if client["identifier"] != entity["description"]["identifier"]:
     errors.append("client entity identifier differs from behavior entity")
-controllers = docs["Companion_RP/render_controllers/bot_companion.render_controllers.json"]["render_controllers"]
-for rc in client["render_controllers"]:
-    if rc not in controllers:
-        errors.append(f"render controller {rc} not defined")
+controllers = {}
+for name, doc in docs.items():
+    if name.startswith("Companion_RP/render_controllers/"):
+        controllers.update(doc["render_controllers"])
+bp_ids = {doc["minecraft:entity"]["description"]["identifier"] for name, doc in docs.items() if "minecraft:entity" in doc}
+for name, doc in docs.items():
+    if "minecraft:client_entity" not in doc:
+        continue
+    desc = doc["minecraft:client_entity"]["description"]
+    if desc["identifier"] not in bp_ids:
+        errors.append(f"{name}: no behavior entity {desc['identifier']}")
+    for rc in desc["render_controllers"]:
+        if rc not in controllers:
+            errors.append(f"{name}: render controller {rc} not defined")
 
 rc = controllers["controller.render.bot_companion"]["arrays"]
 skin_textures = rc["textures"]["Array.skins"]

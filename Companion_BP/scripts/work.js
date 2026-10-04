@@ -37,6 +37,8 @@ const ORE_RANGE = 10;
 const MAX_LOGS = 64;
 const MAX_ORES = 16;
 const BREAK_INTERVAL_TICKS = 6;
+const ARRIVE_TIMEOUT_TICKS = 20 * 20;
+const WAYPOINT_TYPE = "bot:waypoint";
 
 const SIDES = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
@@ -45,18 +47,31 @@ const AROUND = [];
 for (let x = -1; x <= 1; x++)
   for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) AROUND.push([x, y, z]);
 
-const tasks = new Map(); // bot id -> run id of the job in progress
+// bot id -> { end } of the job in progress. Only one job runs at a time, so a bot
+// never walks to another bot's waypoint (bots target the nearest waypoint).
+const tasks = new Map();
 
 export const isLog = (typeId) => LOGS.has(typeId);
 export const isOre = (typeId) => typeId in ORE_DROPS;
 export const isBusy = (bot) => tasks.has(bot.id);
+export const anyJobRunning = () => tasks.size > 0;
 
+/** Stop the bot's job (if any) and put it back to following. */
 export function cancelTask(bot) {
-  const runId = tasks.get(bot.id);
-  if (runId === undefined) return false;
-  system.clearRun(runId);
-  tasks.delete(bot.id);
+  const job = tasks.get(bot.id);
+  if (!job) return false;
+  job.end();
   return true;
+}
+
+/** Waypoints left behind by a job that never finished (e.g. the world was closed mid-job). */
+export function removeStrayWaypoints(dimensions) {
+  const live = new Set([...tasks.values()].map((job) => job.markerId));
+  for (const dimension of dimensions) {
+    for (const marker of dimension.getEntities({ type: WAYPOINT_TYPE })) {
+      if (!live.has(marker.id)) marker.remove();
+    }
+  }
 }
 
 const offset = (p, [x, y, z]) => ({ x: p.x + x, y: p.y + y, z: p.z + z });
@@ -114,50 +129,56 @@ function findAround(dimension, center, types, radius, below, above) {
   return [...volume.getBlockLocationIterator()].sort((a, b) => dist(a) - dist(b));
 }
 
-// Put the bot on a free spot beside the block so it looks like it walked over
-function standNear(bot, p) {
-  const dimension = bot.dimension;
-  for (const [x, z] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-    for (const y of [0, -1, 1]) {
-      const feet = { x: p.x + x, y: p.y + y, z: p.z + z };
-      const free =
-        typeAt(dimension, feet) === "minecraft:air" &&
-        typeAt(dimension, offset(feet, [0, 1, 0])) === "minecraft:air" &&
-        typeAt(dimension, offset(feet, [0, -1, 0])) !== "minecraft:air";
-      if (free && bot.tryTeleport({ x: feet.x + 0.5, y: feet.y, z: feet.z + 0.5 })) return;
-    }
-  }
-}
+const isNear = (location, p) =>
+  Math.hypot(location.x - (p.x + 0.5), location.z - (p.z + 0.5)) <= 2.5 && Math.abs(location.y - p.y) <= 3;
 
-// Break positions one at a time and hand the drops to the player
-function runJob(bot, player, positions, dropFor, sound, doneMessage) {
+// Walk to positions[0], then break positions one at a time and hand the drops to the player.
+// The bot walks by "attacking" an invisible waypoint on the first block, so the game does the
+// pathfinding; once there it keeps swinging at it, which looks like chopping.
+function runJob(bot, player, positions, dropFor, sound, messages) {
   cancelTask(bot);
-  standNear(bot, positions[0]);
-  bot.triggerEvent("bot:sit");
+  const dimension = bot.dimension;
+  const target = positions[0];
+  const marker = dimension.spawnEntity(WAYPOINT_TYPE, { x: target.x + 0.5, y: target.y, z: target.z + 0.5 });
+  bot.triggerEvent("bot:work_start");
+  player.sendMessage(messages.start);
 
   let index = 0;
   let collected = 0;
-  const runId = system.runInterval(() => {
-    const finished = !bot.isValid || index >= positions.length;
-    if (!finished) {
-      const p = positions[index++];
-      const block = bot.dimension.getBlock(p);
-      const drop = block && dropFor(block.typeId);
-      if (drop) {
-        block.setType("minecraft:air");
-        bot.dimension.playSound(sound, p);
-        const target = player.isValid && player.dimension.id === bot.dimension.id ? player.location : p;
-        bot.dimension.spawnItem(drop, target);
-        collected += drop.amount;
-      }
-      if (index < positions.length) return;
-    }
-    system.clearRun(runId);
+  let waited = 0;
+  let arrived = false;
+  const job = { markerId: marker.id };
+  job.end = (message) => {
+    system.clearRun(job.runId);
     tasks.delete(bot.id);
-    if (bot.isValid) bot.triggerEvent("bot:follow");
-    if (player.isValid) player.sendMessage(doneMessage(collected));
+    if (marker.isValid) marker.remove();
+    if (bot.isValid) bot.triggerEvent("bot:work_end");
+    if (message && player.isValid) player.sendMessage(message);
+  };
+
+  job.runId = system.runInterval(() => {
+    if (!bot.isValid) return job.end();
+    if (!arrived) {
+      arrived = isNear(bot.location, target);
+      waited += BREAK_INTERVAL_TICKS;
+      if (!arrived) {
+        if (waited >= ARRIVE_TIMEOUT_TICKS) job.end(messages.unreachable);
+        return;
+      }
+    }
+    const p = positions[index++];
+    const block = dimension.getBlock(p);
+    const drop = block && dropFor(block.typeId);
+    if (drop) {
+      block.setType("minecraft:air");
+      dimension.playSound(sound, p);
+      const to = player.isValid && player.dimension.id === dimension.id ? player.location : p;
+      dimension.spawnItem(drop, to);
+      collected += drop.amount;
+    }
+    if (index >= positions.length) job.end(messages.done(collected));
   }, BREAK_INTERVAL_TICKS);
-  tasks.set(bot.id, runId);
+  tasks.set(bot.id, job);
 }
 
 const logDrop = (typeId) => (LOGS.has(typeId) ? new ItemStack(typeId, 1) : undefined);
@@ -173,8 +194,11 @@ export function chopTree(bot, player, prefix) {
   for (const start of findAround(dimension, player.location, LOGS, TREE_RANGE, 4, 12).slice(0, 8)) {
     const logs = collect(dimension, [start], isLog, MAX_LOGS, AROUND);
     if (!hasCanopy(dimension, logs)) continue;
-    player.sendMessage(prefix + "ไปตัดต้นไม้นะ!");
-    runJob(bot, player, logs.sort(byHeight), logDrop, "dig.wood", (n) => prefix + `ตัดเสร็จแล้ว ได้ไม้ ${n} ชิ้น`);
+    runJob(bot, player, logs.sort(byHeight), logDrop, "dig.wood", {
+      start: prefix + "กำลังเดินไปตัดต้นไม้นะ!",
+      done: (n) => prefix + `ตัดเสร็จแล้ว ได้ไม้ ${n} ชิ้น`,
+      unreachable: prefix + "เดินไปที่ต้นไม้ไม่ได้ ลองพาไปใกล้ ๆ อีกนิด",
+    });
     return;
   }
   player.sendMessage(prefix + `ไม่เจอต้นไม้ในระยะ ${TREE_RANGE} บล็อก`);
@@ -191,8 +215,11 @@ export function mineOres(bot, player, prefix) {
   }
   const kind = sameOre(typeAt(dimension, start));
   const vein = collect(dimension, [start], (t) => sameOre(t) === kind, MAX_ORES, SIDES);
-  player.sendMessage(prefix + "ไปขุดแร่นะ!");
-  runJob(bot, player, vein, oreDrop, "dig.stone", (n) => prefix + `ขุดเสร็จแล้ว ได้ของ ${n} ชิ้น`);
+  runJob(bot, player, vein, oreDrop, "dig.stone", {
+    start: prefix + "กำลังเดินไปขุดแร่นะ!",
+    done: (n) => prefix + `ขุดเสร็จแล้ว ได้ของ ${n} ชิ้น`,
+    unreachable: prefix + "เดินไปที่แร่ไม่ได้ ลองพาไปใกล้ ๆ อีกนิด",
+  });
 }
 
 /** Helper mode: the player just broke a log or ore at p, the bot finishes the rest. */
@@ -202,11 +229,19 @@ export function finishWhatPlayerStarted(bot, player, brokenType, p, prefix) {
   if (isLog(brokenType)) {
     const logs = collect(dimension, starts, isLog, MAX_LOGS, AROUND);
     if (logs.length === 0 || !hasCanopy(dimension, logs)) return;
-    runJob(bot, player, logs.sort(byHeight), logDrop, "dig.wood", (n) => prefix + `ช่วยตัดอีก ${n} ชิ้นแล้ว`);
+    runJob(bot, player, logs.sort(byHeight), logDrop, "dig.wood", {
+      start: prefix + "เดี๋ยวช่วยตัดต่อนะ!",
+      done: (n) => prefix + `ช่วยตัดอีก ${n} ชิ้นแล้ว`,
+      unreachable: prefix + "เดินไปช่วยไม่ได้ ต้นนี้อยู่ไกลไป",
+    });
   } else if (isOre(brokenType)) {
     const kind = sameOre(brokenType);
     const vein = collect(dimension, starts, (t) => sameOre(t) === kind, MAX_ORES, SIDES);
     if (vein.length === 0) return;
-    runJob(bot, player, vein, oreDrop, "dig.stone", (n) => prefix + `ช่วยขุดอีก ${n} ชิ้นแล้ว`);
+    runJob(bot, player, vein, oreDrop, "dig.stone", {
+      start: prefix + "เดี๋ยวช่วยขุดต่อนะ!",
+      done: (n) => prefix + `ช่วยขุดอีก ${n} ชิ้นแล้ว`,
+      unreachable: prefix + "เดินไปช่วยไม่ได้ แร่อยู่ไกลไป",
+    });
   }
 }
