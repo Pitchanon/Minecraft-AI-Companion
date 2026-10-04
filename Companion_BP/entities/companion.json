@@ -82,6 +82,14 @@
         }
       },
       "bot:following": {
+        "minecraft:behavior.teleport_to_owner": {
+          "priority": 1,
+          "filters": {
+            "test": "owner_distance",
+            "operator": ">",
+            "value": 12
+          }
+        },
         "minecraft:behavior.follow_owner": {
           "priority": 6,
           "speed_multiplier": 1.4,
