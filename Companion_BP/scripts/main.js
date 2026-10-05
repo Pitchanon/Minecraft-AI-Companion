@@ -75,6 +75,42 @@ function linkOwner(bot, player) {
   bot.nameTag = `${player.name} Bot`;
 }
 
+// Where each bot was when it left the loaded area, so the owner can find it again. Written only
+// when a bot unloads (no polling); entries for bots that are loaded again are simply ignored.
+const FAR_PROP = "bot:far"; // on the world: JSON { botId: { owner, name, dim, x, y, z } }
+const DIM_NAMES = { "minecraft:overworld": "โลกปกติ", "minecraft:nether": "เนเธอร์", "minecraft:the_end": "ดิเอนด์" };
+const sentHome = new Set(); // ids of bots this script is removing on purpose
+
+function readFar() {
+  try {
+    return JSON.parse(world.getDynamicProperty(FAR_PROP) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function updateFar(change) {
+  const far = readFar();
+  if (change(far) === false) return;
+  world.setDynamicProperty(FAR_PROP, Object.keys(far).length ? JSON.stringify(far) : undefined);
+}
+
+function farBots(player) {
+  const loaded = new Set(loadedBots().map((bot) => bot.id));
+  return Object.entries(readFar())
+    .filter(([id, bot]) => bot.owner === player.id && !loaded.has(id))
+    .map(([, bot]) => bot);
+}
+
+function farLines(bots) {
+  return bots.map((b) => `${b.name}: x ${b.x} y ${b.y} z ${b.z} (${DIM_NAMES[b.dim] ?? b.dim})`).join("\n");
+}
+
+function notFoundMessage(player, fallback) {
+  const far = farBots(player);
+  return far.length ? "บอทอยู่ไกล ไปหาตามพิกัดนี้ได้เลย ของที่ฝากยังอยู่ในตัวบอท\n" + farLines(far) : fallback;
+}
+
 function summonBot(player) {
   const count = ownedBots(player).length;
   if (count >= MAX_BOTS_PER_PLAYER) {
@@ -94,12 +130,14 @@ function summonBot(player) {
     bot.triggerEvent("bot:on_tame");
   }, 1);
   player.sendMessage(PREFIX + `สวัสดีครับ! มาเป็นเพื่อนแล้ว (${count + 1}/${MAX_BOTS_PER_PLAYER})`);
+  const far = farBots(player);
+  if (far.length) player.sendMessage(PREFIX + "§eบอทตัวเก่ายังรออยู่ ของที่ฝากยังอยู่ในตัวมัน§r\n" + farLines(far));
 }
 
 function forEachBot(player, action, message) {
   const bots = ownedBots(player);
   if (bots.length === 0) {
-    player.sendMessage(PREFIX + "หาบอทไม่เจอ ลองเรียกบอทตัวใหม่ได้เลย");
+    player.sendMessage(PREFIX + notFoundMessage(player, "หาบอทไม่เจอ ลองเรียกบอทตัวใหม่ได้เลย"));
     return;
   }
   bots.forEach(action);
@@ -133,13 +171,61 @@ function stopBot(bot) {
   );
 }
 
+function botContainer(bot) {
+  return bot.getComponent("minecraft:inventory")?.container;
+}
+
+// remove() deletes the bot without dropping loot, so drop what was stored first
+function dropStoredItems(bot) {
+  const container = botContainer(bot);
+  if (!container) return;
+  for (let slot = 0; slot < container.size; slot++) {
+    const item = container.getItem(slot);
+    if (!item) continue;
+    bot.dimension.spawnItem(item, bot.location);
+    container.setItem(slot);
+  }
+}
+
 function removeBots(player) {
   const bots = ownedBots(player);
+  const far = farBots(player); // before removing, while the bots being sent home still count as loaded
   bots.forEach((bot) => {
     cancelTask(bot);
+    dropStoredItems(bot);
+    sentHome.add(bot.id);
     bot.remove();
   });
   player.sendMessage(PREFIX + (bots.length ? `ส่งบอทกลับบ้านแล้ว ${bots.length} ตัว` : "ไม่มีบอทอยู่ใกล้ ๆ"));
+  if (far.length) player.sendMessage(PREFIX + "บอทที่อยู่ไกลยังส่งกลับบ้านไม่ได้ ต้องไปหาก่อน\n" + farLines(far));
+}
+
+// teleport_to_owner only works inside one dimension and only while the bot is loaded, so a
+// following bot is left behind when its owner changes dimension or dies and respawns far away.
+// Bring those bots along once; the destination may still be loading, so retry for a few seconds.
+const BRING_EVERY_TICKS = 5;
+const BRING_TRIES = 20;
+const botsAtDeath = new Map(); // player id -> bots that were following when the player died
+
+function followingBots(player, dimension) {
+  return ownedBots(player).filter(
+    (bot) => bot.getProperty("bot:following") && (!dimension || bot.dimension.id === dimension.id)
+  );
+}
+
+function bringAlong(player, bots, why) {
+  if (!bots.length) return;
+  let pending = bots;
+  let tries = 0;
+  const runId = system.runInterval(() => {
+    tries++;
+    if (player.isValid) {
+      pending = pending.filter((bot) => bot.isValid && !bot.tryTeleport(player.location, { dimension: player.dimension }));
+    }
+    if (pending.length && tries < BRING_TRIES) return;
+    system.clearRun(runId);
+    if (player.isValid) debug(player, `${why}: brought ${bots.length - pending.length}/${bots.length} bots`);
+  }, BRING_EVERY_TICKS);
 }
 
 function giveRemote(player) {
@@ -174,7 +260,9 @@ function assignWork(player, job) {
   }
   const bot = idleBot(player);
   if (!bot) {
-    player.sendMessage(PREFIX + (ownedBots(player).length ? "บอททุกตัวกำลังทำงานอยู่ หรืออยู่ไกลเกินไป" : "ต้องเรียกบอทก่อนนะ"));
+    player.sendMessage(
+      PREFIX + (ownedBots(player).length ? "บอททุกตัวกำลังทำงานอยู่ หรืออยู่ไกลเกินไป" : notFoundMessage(player, "ต้องเรียกบอทก่อนนะ"))
+    );
     return;
   }
   job(bot, player, PREFIX);
@@ -265,6 +353,7 @@ async function thenOpen(player, openNext) {
 
 async function openMenu(player) {
   const count = ownedBots(player).length;
+  const far = farBots(player);
   const full = count >= MAX_BOTS_PER_PLAYER;
   const buttons = [
     [full ? "§7เรียกบอทตัวใหม่ (เต็มแล้ว)" : "เรียกบอทตัวใหม่", "textures/items/egg", ACTIONS.summon],
@@ -279,7 +368,9 @@ async function openMenu(player) {
   const form = new ActionFormData()
     .title("รีโมทเพื่อนบอท")
     .body(
-      `บอทของคุณ: §a${count}/${MAX_BOTS_PER_PLAYER}§r ตัว\n\n` +
+      `บอทของคุณ: §a${count}/${MAX_BOTS_PER_PLAYER}§r ตัว\n` +
+        (far.length ? `§eอยู่ไกล:§r\n${farLines(far)}\n` : "") +
+        "\n" +
         "§dคำแนะนำ:§r ต่อยบอท 3 ครั้งติดกันเพื่อสั่งให้หยุด\nถ้าบอทติดหรืออยู่ไกล กด \"เรียกบอทมาหา\"\n\n" +
         `§8v${VERSION}`
     );
@@ -363,8 +454,27 @@ world.afterEvents.playerBreakBlock.subscribe(({ player, block, brokenBlockPermut
   if (bot) finishWhatPlayerStarted(bot, player, brokenType, block.location, PREFIX);
 });
 
+world.afterEvents.entityDie.subscribe(
+  ({ deadEntity: player }) => {
+    if (!isActiveCopy()) return;
+    const bots = followingBots(player);
+    if (bots.length) botsAtDeath.set(player.id, bots);
+  },
+  { entityTypes: ["minecraft:player"] }
+);
+
+world.afterEvents.playerDimensionChange.subscribe(({ player, fromDimension }) => {
+  if (isActiveCopy()) bringAlong(player, followingBots(player, fromDimension), "dimension change");
+});
+
 world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
-  if (!initialSpawn || !isActiveCopy()) return;
+  if (!initialSpawn) {
+    const bots = botsAtDeath.get(player.id);
+    botsAtDeath.delete(player.id);
+    if (bots && isActiveCopy()) bringAlong(player, bots, "respawn");
+    return;
+  }
+  if (!isActiveCopy()) return;
   if (!player.getDynamicProperty(GOT_REMOTE_PROP)) giveRemote(player);
   player.sendMessage(PREFIX + `พร้อมแล้ว (v${VERSION})`);
   if (otherCopies.size || commandsTaken) {
@@ -406,14 +516,52 @@ system.runInterval(() => {
   for (const player of world.getAllPlayers()) {
     if (!player.getDynamicProperty(DEBUG_PROP) || !isActiveCopy()) continue;
     for (const bot of ownedBots(player)) {
-      debug(player, `${bot.nameTag}: fighting=${bot.getProperty("bot:fighting")} busy=${isBusy(bot)}`);
+      const container = botContainer(bot);
+      const stored = container ? container.size - container.emptySlotsCount : "no inventory";
+      debug(player, `${bot.nameTag} [${bot.id}]: fighting=${bot.getProperty("bot:fighting")} busy=${isBusy(bot)} stored=${stored}`);
     }
   }
 }, 5 * 20);
 
 world.afterEvents.entitySpawn.subscribe(({ entity }) => {
   if (entity.typeId !== BOT_TYPE) return;
-  if (loadedBots().length > MAX_BOTS_IN_WORLD) entity.remove();
+  if (loadedBots().length <= MAX_BOTS_IN_WORLD) return;
+  sentHome.add(entity.id);
+  entity.remove();
+});
+
+// Before events run in restricted mode; if the world write is refused there, do it next tick
+function writeNowOrSoon(write) {
+  try {
+    write();
+  } catch {
+    system.run(write);
+  }
+}
+
+// Fires for every entity that unloads or is removed, so leave right away for anything else
+world.beforeEvents.entityRemove.subscribe(({ removedEntity: bot }) => {
+  if (bot.typeId !== BOT_TYPE || !isActiveCopy()) return;
+  const id = bot.id;
+  const gone = sentHome.delete(id) || !(bot.getComponent("minecraft:health")?.currentValue > 0);
+  if (gone) {
+    writeNowOrSoon(() =>
+      updateFar((far) => {
+        if (!(id in far)) return false;
+        delete far[id];
+      })
+    );
+    return;
+  }
+  const owner = bot.getDynamicProperty(OWNER_PROP);
+  if (!owner) return;
+  const { x, y, z } = bot.location;
+  const entry = { owner, name: bot.nameTag, dim: bot.dimension.id, x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+  writeNowOrSoon(() =>
+    updateFar((far) => {
+      far[id] = entry;
+    })
+  );
 });
 
 // A bot tamed with an apple or cookie: the nearest player is the one who fed it

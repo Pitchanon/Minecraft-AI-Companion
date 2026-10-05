@@ -10,6 +10,11 @@
           "type": "bool",
           "default": false,
           "client_sync": false
+        },
+        "bot:following": {
+          "type": "bool",
+          "default": false,
+          "client_sync": false
         }
       }
     },
@@ -392,7 +397,8 @@
           ]
         },
         "set_property": {
-          "bot:fighting": true
+          "bot:fighting": true,
+          "bot:following": true
         }
       },
       "bot:sit": {
@@ -406,6 +412,9 @@
           "component_groups": [
             "bot:staying"
           ]
+        },
+        "set_property": {
+          "bot:following": false
         }
       },
       "bot:follow": {
@@ -419,6 +428,9 @@
           "component_groups": [
             "bot:following"
           ]
+        },
+        "set_property": {
+          "bot:following": true
         }
       },
       "bot:stop": {
@@ -435,7 +447,8 @@
           ]
         },
         "set_property": {
-          "bot:fighting": false
+          "bot:fighting": false,
+          "bot:following": true
         }
       },
       "bot:resume_combat": {
@@ -462,7 +475,8 @@
           ]
         },
         "set_property": {
-          "bot:fighting": false
+          "bot:fighting": false,
+          "bot:following": false
         }
       },
       "bot:work_end": {
@@ -478,7 +492,8 @@
           ]
         },
         "set_property": {
-          "bot:fighting": true
+          "bot:fighting": true,
+          "bot:following": true
         }
       }
     }
